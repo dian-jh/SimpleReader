@@ -188,7 +188,7 @@ Reader Kit 参考（官方）：
 
 - UserId
 - BookId
-- LastChapterId
+- LastCatalogId
 - LastPosition
 - UpdateTime
 
@@ -216,7 +216,7 @@ Reader Kit 参考（官方）：
 - Id
 - UserId
 - BookId
-- ChapterId
+- CatalogId
 - Locator
 - QuoteText
 - NoteContent
@@ -289,10 +289,14 @@ Reader Kit 参考（官方）：
 | BookId | UUID | 复合主键 |
 | LocatorType | Varchar(32) | `CFI`/`DOM_POS`/`PAGE_INDEX` |
 | LocatorValue | Varchar(1000) | 定位值 |
-| ChapterId | UUID? | 当前章节 |
+| CatalogId | UUID? | 当前章节 |
 | ProgressRatio | Decimal(5,4) | 0~1 |
 | Version | Int | 乐观锁版本 |
 | UpdateTime | DateTime | 更新时间 |
+
+> LocatorType：不同的书籍格式，定位方式是完全不同的。前端定位字符串时，先查看LocatorType的类型，从而决定调用Reader kit的哪个API去跳转。
+
+
 
 #### 3.2.5 UserCollections / BookCollectionMapping（保持）
 
@@ -312,7 +316,7 @@ CollectionId、BookId、UserId、AddTime
 
 ```
 Annotations(标注表):
-Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteContent(用户写的笔记内容（如果只是纯划线，则为空）)、 style(Varchar 20)、Type(0-纯划线，1-带笔记)、Status(0-正常，1-已删除)、UpdatedAt、CreateTime
+Id、UserId、BookId、CatalogId、Locator (Varchar 500)、QuoteText、NoteContent(用户写的笔记内容（如果只是纯划线，则为空）)、 style(Varchar 20)、Type(0-纯划线，1-带笔记)、Status(0-正常，1-已删除)、UpdatedAt、CreateTime
 ```
 
 `Type` 枚举：
@@ -324,6 +328,15 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 ---
 
 ## 4. 用户与鉴权模块
+
+**关联表结构**
+
+```
+User：
+Id、Username、Account、PasswordHash、AvatarUrl、CreateTime
+```
+
+
 
 ### 4.1 注册
 
@@ -443,7 +456,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "date": "2026-04-18",
   "durationSec": 64,
   "targetSec": 300,
-  "remainingSec": 236,
+  "remainingSec": 236,//remainingSec = TargetDuration - Duration
   "isAchieved": false
 }
 ```
@@ -519,7 +532,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "position": {
     "locatorType": "CFI",
     "locatorValue": "epubcfi(/6/4!/4/2/14/1:0)",
-    "chapterId": "uuid",
+    "catalogId": "uuid",
     "progressRatio": 0.2431
   }
 }
@@ -555,6 +568,8 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 ```json
 {
   "readerBookKey": "sha256:xxxx",
+  "fileHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "fileUrl": "https://oss-xxx.com/books/mao.epub",
   "title": "毛泽东选集",
   "author": "毛泽东",
   "coverUrl": "https://...",
@@ -577,11 +592,46 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 
 说明：同一用户 `readerBookKey` 唯一，重复导入返回既有 `bookId`。
 
+**校验服务器是否存在上传的文件**
+
+- 路由 `POST /api/v1/files/check`（入参：`fileHash`）
+
+  入参:
+
+  ```json
+  {
+    "fileHash": "e3b0c4429..."
+  }
+  ```
+
+  出参：
+
+  ```json
+  { "exists": true或者false, "fileUrl": "https://..."或者null }
+  ```
+
+  如果exists为false，调用upload上传图书文件
+
+**上传图书文件(异步/后台)**
+
+- 路由 POST /api/v1/files/upload
+
+入参：`multipart/form-data`，包含 `file` (文件流) 和 `type` (例如 `epub`, `cover`)。
+
+出参：
+
+```json
+{
+  "fileHash": "e3b0c4429..."，
+   "fileUrl": "https://..."
+}
+```
+
 
 
 ### 6.3 上报目录快照（由 Reader Kit 提供目录列表）
 
-- 路由：`PUT /api/v1/library/books/{bookId}/chapters`
+- 路由：`PUT /api/v1/library/books/{bookId}/catalogs`
 
 路径参数：
 
@@ -667,6 +717,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 {
   "id": "uuid",
   "readerBookKey": "sha256:xxxx",
+  "fileUrl": "https://oss-xxx.com/books/mao.epub",
   "title": "毛泽东选集",
   "author": "毛泽东",
   "coverUrl": "https://...",
@@ -688,7 +739,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 
 ### 6.6 获取目录树（完整）
 
-- 路由：`GET /api/v1/library/books/{bookId}/chapters?tree=true`
+- 路由：`GET /api/v1/library/books/{bookId}/catalogs?tree=true`
 
 路径参数：
 
@@ -787,7 +838,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "position": {
     "locatorType": "CFI",
     "locatorValue": "epubcfi(/6/4!/4/2/14/1:0)",
-    "chapterId": "uuid",
+    "catalogId": "uuid",
     "progressRatio": 0.2315
   },
   "version": 19,
@@ -822,7 +873,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "position": {
     "locatorType": "CFI",
     "locatorValue": "epubcfi(/6/4!/4/2/14/1:12)",
-    "chapterId": "uuid",
+    "catalogId": "uuid",
     "progressRatio": 0.2431
   },
   "version": 19
@@ -1059,7 +1110,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "items": [
     {
       "id": "uuid",
-      "chapterId": "uuid",
+      "catalogId": "uuid",
       "quoteText": "游民生活。如打春...",
       "noteContent": "这里说明了地方禁令",
       "style": "YELLOW",
@@ -1095,7 +1146,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
   "upserts": [
     {
       "id": "uuid",
-      "chapterId": "uuid",
+      "catalogId": "uuid",
       "quoteText": "游民生活。如打春...",
       "noteContent": "",
       "style": "YELLOW",
@@ -1184,8 +1235,8 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 {
   "items": [
     {
-      "chapterId": "uuid",
-      "chapterTitle": "第117章",
+      "catalogId": "uuid",
+      "catalogTitle": "第117章",
       "snippet": "...有一种“强告化”又叫“流民”者...",
       "locator": {
         "locatorType": "CFI",
@@ -1206,7 +1257,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 ### 11.1 打开图书（阅读页）
 
 1. `GET /api/v1/library/books/{bookId}`（拿书籍元信息）
-2. `GET /api/v1/library/books/{bookId}/chapters?tree=true`（拿目录树）
+2. `GET /api/v1/library/books/{bookId}/catalogs?tree=true`（拿目录树）
 3. `GET /api/v1/reading-progress/{bookId}`（拿上次进度）
 4. Reader Kit 在本地打开图书文件并跳转到 `locator`
 5. `GET /api/v1/books/{bookId}/annotations?...`（加载标注层）
@@ -1249,7 +1300,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
    - `PUT /api/v1/users/me`
    - `POST /api/v1/auth/logout`
 6. 阅读页（`阅读页_1/2/3`）
-   - `GET /api/v1/library/books/{bookId}/chapters?tree=true`
+   - `GET /api/v1/library/books/{bookId}/catalogs?tree=true`
    - `GET /api/v1/search/books/{bookId}/content`
    - `GET/PUT /api/v1/reading-progress/{bookId}`
    - `GET /api/v1/books/{bookId}/annotations`
@@ -1264,7 +1315,7 @@ Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteConte
 |---|---|
 | `POST api/library/upload` | `POST /api/v1/library/books`（注册本地图书元信息） |
 | `GET api/library/tasks/{TaskId}` | 删除（不再有解析任务） |
-| `GET /api/v1/library/books/{bookId}/chapters/{chapterId}/content` | 删除（正文由 Reader Kit 本地读取） |
+| `GET /api/v1/library/books/{bookId}/catalogs/{catalogId}/content` | 删除（正文由 Reader Kit 本地读取） |
 | `GET api/readtime/today` | `GET /api/v1/read-goal/today` |
 | `PUT api/readtime/setTarget` | `PUT /api/v1/read-goal/target` |
 | `GET api/readtime/longestStreak` | `GET /api/v1/read-goal/streak` |
