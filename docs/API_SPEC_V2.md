@@ -4,6 +4,19 @@
 > 适用端：ArkTS（HarmonyOS NEXT）+ Reader Kit + 后端 CRUD 服务  
 > 状态：Frozen（7 人并发开发按此执行）
 
+
+
+**整体需求**
+
+用户可以自行上传EPUB格式书籍。并且切换设备之后将本账号的书籍同步到新设备。
+
+本地优先、云端同步
+
+- 用户在app上进行上传，使用Reader Kit进行解析，直接进行阅读
+- 在后台进行异步的上传到后端的服务器中
+- 用户切换设备，进入书架查询拥有书籍，点击云端同步到前端
+- 使用Reader Kit并通过后端的接口，直接操纵本地书籍文件
+
 ---
 
 ## 1. 变更背景与边界
@@ -219,9 +232,7 @@ Reader Kit 参考（官方）：
 
 #### 3.2.1 需要废弃/替代
 
-1. `BookParsingTasks`：废弃（后端不再解析 EPUB）。
-2. `Chapters`：改为目录快照表 `BookCatalogs`。
-3. `Books.FileUri`：不再作为“后端解析入口”，仅可保留为客户端文件引用或同步标识字段。
+1. `Books.FileUri`：不再作为“后端解析入口”，仅可保留为客户端文件引用或同步标识字段。
 
 #### 3.2.2 Books（调整后）
 
@@ -229,7 +240,9 @@ Reader Kit 参考（官方）：
 |---|---|---|
 | Id | UUID | 主键 |
 | UserId | UUID | 所属用户 |
-| Title | Varchar(256) | 书名（Reader Kit 书籍信息） |
+| Title | Varchar(500) | 书名（Reader Kit 书籍信息） |
+| FileHash | VarChar(64) | 文件的MD5或SHA256哈希值(多个用户上传同一本书，可以对比FileHash实现秒传) |
+| FileUrl | Varchar(256) | 云端书籍绝对地址 |
 | Author | Varchar(256) | 作者 |
 | CoverUrl | Text | 封面（可空） |
 | Intro | Text | 简介（可空） |
@@ -285,7 +298,22 @@ Reader Kit 参考（官方）：
 
 `UserCollections` 与 `BookCollectionMapping` 保持原始设计，字段不变。
 
+```
+UserCollections：
+Id、UserID、Name、SortOrder(藏书排序顺序)、CreateTime
+
+BookCollectionMapping：
+CollectionId、BookId、UserId、AddTime
+```
+
+
+
 #### 3.2.6 Annotations（保留，补充枚举）
+
+```
+Annotations(标注表):
+Id、UserId、BookId、ChapterId、Locator (Varchar 500)、QuoteText、NoteContent(用户写的笔记内容（如果只是纯划线，则为空）)、 style(Varchar 20)、Type(0-纯划线，1-带笔记)、Status(0-正常，1-已删除)、UpdatedAt、CreateTime
+```
 
 `Type` 枚举：
 
@@ -348,28 +376,6 @@ Reader Kit 参考（官方）：
 }
 ```
 
-### 4.3 刷新 Token
-
-- 路由：`POST /api/v1/auth/refresh`
-
-入参：
-
-```json
-{
-  "refreshToken": "jwt"
-}
-```
-
-出参：
-
-```json
-{
-  "accessToken": "jwt",
-  "refreshToken": "jwt",
-  "expiresInSec": 7200
-}
-```
-
 ### 4.4 退出登录
 
 - 路由：`POST /api/v1/auth/logout`
@@ -422,40 +428,6 @@ Reader Kit 参考（官方）：
   "updated": true
 }
 ```
-
-### 4.7 通知设置（对应账户页）
-
-- `GET /api/v1/users/me/notification-settings`
-
-出参：
-
-```json
-{
-  "dailyGoalReminderEnabled": true,
-  "reminderTime": "21:00"
-}
-```
-
-- `PUT /api/v1/users/me/notification-settings`
-
-入参：
-
-```json
-{
-  "dailyGoalReminderEnabled": true,
-  "reminderTime": "21:00"
-}
-```
-
-出参：
-
-```json
-{
-  "updated": true
-}
-```
-
----
 
 ## 5. 阅读目标与统计模块
 
@@ -605,31 +577,7 @@ Reader Kit 参考（官方）：
 
 说明：同一用户 `readerBookKey` 唯一，重复导入返回既有 `bookId`。
 
-### 6.2 更新图书元信息
 
-- 路由：`PATCH /api/v1/library/books/{bookId}`
-
-路径参数：
-
-- `bookId`（UUID，必填）
-
-入参：
-
-```json
-{
-  "title": "毛泽东选集（新版）",
-  "author": "毛泽东",
-  "coverUrl": "https://..."
-}
-```
-
-出参：
-
-```json
-{
-  "updated": true
-}
-```
 
 ### 6.3 上报目录快照（由 Reader Kit 提供目录列表）
 
