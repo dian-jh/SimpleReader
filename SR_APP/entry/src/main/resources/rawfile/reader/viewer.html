@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SimpleReader Viewer</title>
+  <script src="../jszip.min.js"></script>
+  <script src="./epub.min.js"></script>
+  <style>
+    body, html {
+        margin: 0; padding: 0;
+        width: 100%; height: 100%;
+        overflow: hidden; /* 严禁滚动，由 epub.js 处理分页 */
+        background-color: transparent; /* 背景由原生层决定 */
+    }
+    #viewer {
+        width: 100%; height: 100%;
+    }
+  </style>
+</head>
+<body>
+<div id="viewer"></div>
+<script>
+  let book = null;
+  let rendition = null;
+
+  // 核心初始化函数
+  window.initReaderWithBase64 = function(base64Data, lastLocator) {
+      try {
+          console.log("JS: 开始接收 Base64 数据...");
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+          }
+
+          if (book) { book.destroy(); }
+
+          // 使用 ArrayBuffer 初始化
+          book = window.ePub(bytes.buffer);
+
+          // 渲染至 viewer 容器
+          rendition = book.renderTo("viewer", {
+              width: "100%",
+              height: "100%",
+              flow: "paginated", // 强制分页
+              manager: "default"
+          });
+
+          // 监听渲染完成
+          rendition.display(lastLocator || undefined).then(() => {
+              console.log("JS: 书籍渲染成功");
+              if (window.ArkTSBridge) window.ArkTSBridge.onReady();
+          });
+
+          // 进度回调
+          rendition.on("relocated", (location) => {
+              if (window.ArkTSBridge) {
+                  const percent = book.locations.percentageFromCfi(location.start.cfi);
+                  window.ArkTSBridge.onProgressChange(location.start.cfi, percent);
+              }
+          });
+
+      } catch (e) {
+          console.error("JS错误:", e);
+          if (window.ArkTSBridge) window.ArkTSBridge.onError(e.message);
+      }
+  };
+
+  // 翻页接口
+  window.prevPage = () => rendition && rendition.prev();
+  window.nextPage = () => rendition && rendition.next();
+</script>
+</body>
+</html>

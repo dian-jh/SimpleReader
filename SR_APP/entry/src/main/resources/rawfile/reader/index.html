@@ -1,0 +1,159 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>SimpleReader Headless Parser</title>
+  <script src="../jszip.min.js"></script>
+  <script src="./epub.min.js"></script>
+</head>
+<body>
+<script>
+  (function () {
+    let activeBook = null;
+    let parseVersion = 0;
+
+    function callArkBridge(methodName, value) {
+      try {
+        const bridge = window.ArkTSBridge;
+        if (!bridge || typeof bridge[methodName] !== "function") {
+          return;
+        }
+        bridge[methodName](value);
+      } catch (error) {
+        console.error("[HeadlessParser] bridge error", error);
+      }
+    }
+
+    function cleanupBook(book) {
+      if (!book) return;
+      try {
+        if (typeof book.destroy === "function") book.destroy();
+      } catch (error) {
+        console.warn("[HeadlessParser] destroy failed", error);
+      }
+    }
+
+    function blobToDataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(new Error("read cover blob failed"));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+      async function resolveCoverBase64(book) {
+        let coverUrl = "";
+        try {
+          if (typeof book.coverUrl === "function") coverUrl = await book.coverUrl();
+          if (!coverUrl) return "";
+          const response = await fetch(coverUrl);
+          if (!response.ok) return "";
+          const blob = await response.blob();
+          return await blobToDataUrl(blob);
+        } catch (_) {
+          return "";
+        } finally {
+          // 【修复点】：加上 coverUrl 的真值判断和类型判断
+          if (coverUrl && typeof coverUrl === 'string' && coverUrl.startsWith("blob:")) {
+            try { URL.revokeObjectURL(coverUrl); } catch (_) {}
+          }
+        }
+      }
+
+    // 【修复 3】：补回漏掉的获取标题函数
+    function pickTitle(metadata) {
+      const title = metadata && typeof metadata.title === "string" ? metadata.title.trim() : "";
+      return title.length > 0 ? title : "Unknown Title";
+    }
+
+    // 【修复 3】：补回漏掉的获取作者函数
+    function pickAuthor(metadata) {
+      const creator = metadata && typeof metadata.creator === "string" ? metadata.creator.trim() : "";
+      if (creator.length > 0) return creator;
+      const author = metadata && typeof metadata.author === "string" ? metadata.author.trim() : "";
+      return author;
+    }
+
+    async function parseEpubBase64(base64Data) {
+      console.log("进入 parseEpubBase64, 接收到长度为: " + (base64Data ? base64Data.length : 0));
+      const currentVersion = ++parseVersion;
+
+      if (!window.ePub) {
+        console.error("致命错误: ePub 对象不存在，检查 epub.min.js 是否加载成功");
+        callArkBridge("onParseError", "epub.js is unavailable");
+        return;
+      }
+
+     try {
+          console.log("开始解码 Base64...");
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          console.log("解码完成，开始传入 epub.js...");
+
+          cleanupBook(activeBook);
+          activeBook = null;
+
+          let currentBook = window.ePub(bytes.buffer);
+          activeBook = currentBook;
+
+          console.log("epub.js 实例创建成功，等待元数据和目录...");
+
+          // 【修改点 1】：同时等待 metadata 和 navigation 加载完成
+          const [metadata, navigation] = await Promise.all([
+            currentBook.loaded.metadata,
+            currentBook.loaded.navigation
+          ]);
+
+          console.log("元数据获取成功: " + metadata.title);
+
+          const title = pickTitle(metadata);
+          const author = pickAuthor(metadata);
+          const coverBase64 = await resolveCoverBase64(currentBook);
+
+          // 【新增点】：提取章节目录 (TOC)
+          let tocList = [];
+          if (navigation && navigation.toc) {
+            // epub.js 的 toc 是一个数组，每个元素包含 id, href, label, subitems
+            // 我们提取核心字段，方便 ArkTS 存储
+            tocList = navigation.toc.map(item => {
+              return {
+                id: item.id,
+                label: item.label ? item.label.trim() : "未知章节",
+                href: item.href, // 这个 href 非常重要，队友点击目录跳转时需要用到它！
+                subitems: item.subitems // 如果有子章节，也会一并包含
+              };
+            });
+            console.log("目录提取成功，共 " + tocList.length + " 个顶级章节");
+          }
+
+          if (currentVersion !== parseVersion) return;
+
+          // 【修改点 2】：把 tocList 转成 JSON 字符串，塞进 payload 传给 ArkTS
+          const payload = {
+            title: title,
+            author: author,
+            coverBase64: coverBase64,
+            tocJson: JSON.stringify(tocList) // 序列化为字符串方便传输和 SQLite 存储
+          };
+
+          callArkBridge("onParseSuccess", JSON.stringify(payload));
+          console.log("解析彻底成功，包含目录数据，已传回 ArkTS");
+
+      } catch (error) {
+        console.error("HTML内部发生异常: " + error.message);
+        if (currentVersion !== parseVersion) return;
+        callArkBridge("onParseError", "解析错误: " + error.message);
+      }
+    }
+
+    // 【修复 1】：正确导出函数名！
+    window.parseEpubBase64 = parseEpubBase64;
+  })();
+</script>
+</body>
+</html>
