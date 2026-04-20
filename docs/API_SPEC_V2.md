@@ -1335,5 +1335,25 @@ Id、Username、Account、PasswordHash、AvatarUrl、CreateTime
 6. BE-Reading：目标统计与会话汇总
 7. BE-Annotation：标注增量同步
 
+前端大致代码结构
 
+```
+/entry/src/main/ets
+ ├── /appability          # [系统级] UIAbility 生命周期入口 (仅限负责人修改)
+ ├── /common              # [公共禁飞区] 核心基建
+ │   ├── /http            # 统一网络请求封装 (自动带Token、统一错误拦截)
+ │   ├── /utils           # 工具类 (如 Hash计算、时区转换)
+ │   └── /theme           # 全局样式 (主题色、统一字体大小常量)
+ ├── /database            # [前端 A 专属] 本地 SQLite 核心
+ │   ├── /entity          # 本地表结构模型 (LocalBooks, SyncQueue)
+ │   └── /dao             # 数据库增删改查方法与离线队列逻辑
+ ├── /features            # [核心战场 - 业务模块区]
+ │   ├── /bookshelf       # [前端 C 专属] 书库页面、书架网格组件
+ │   ├── /reader          # [前端 B、D 共享与隔离]
+ │   │   ├── /engine      # [前端 B 专属] Reader Kit 核心接入层
+ │   │   └── /ui          # [前端 D 专属] 标注菜单、目录抽屉、设置面板
+ │   └── /dashboard       # [前端 E 专属] 目标统计图表与账户页面
+ └── /pages               # [路由中转站]
+     └── Index.ets        # 全局根页面 (建议使用 Navigation 承载子模块)
+```
 
