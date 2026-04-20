@@ -1,12 +1,38 @@
 import { common } from '@kit.AbilityKit';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
+import { webview } from '@kit.ArkWeb';
+import fs from '@ohos.file.fs';
+import util from '@ohos.util';
 import { BookDao } from '../../../database/dao/BookDao';
-import { LocalBook } from '../../../database/entity/LocalBook';
-import { BookImportUtil } from '../utils/BookImportUtil';
+import { LocalBook, LocalBookState, LocalBookSyncStatus } from '../../../database/entity/LocalBook';
+import { BookImportUtil, BookSandboxFile } from '../utils/BookImportUtil';
 import { SyncService } from '../services/SyncService';
 import { BookListItem } from '../components/BookListItem';
 import { BookGridItem } from '../components/BookGridItem';
+
+interface EpubParsePayload {
+  title: string;
+  author: string;
+  coverBase64: string;
+  tocJson: string;
+}
+
+class BookshelfParseBridge {
+  private owner: BookshelfPage;
+
+  constructor(owner: BookshelfPage) {
+    this.owner = owner;
+  }
+
+  onParseSuccess(jsonStr: string): void {
+    this.owner.onParseSuccess(jsonStr);
+  }
+
+  onParseError(message: string): void {
+    this.owner.onParseError(message);
+  }
+}
 
 enum ShelfViewMode {
   LIST = 'list',
@@ -18,9 +44,14 @@ export struct BookshelfPage {
   @State private books: LocalBook[] = [];
   @State private viewMode: ShelfViewMode = ShelfViewMode.LIST;
   @State private loading: boolean = false;
+  @State private parserReady: boolean = false;
+  @State private parsingBook: boolean = false;
 
   private readonly bookDao: BookDao = BookDao.getInstance();
   private syncService?: SyncService;
+  private parserController: webview.WebviewController = new webview.WebviewController();
+  private parseBridge: BookshelfParseBridge = new BookshelfParseBridge(this);
+  private pendingImportTask: BookSandboxFile | null = null;
 
   aboutToAppear(): void {
     void this.bootstrap();
@@ -39,22 +70,24 @@ export struct BookshelfPage {
       } else {
         this.GridBuilder();
       }
+
+      this.HiddenParserWebBuilder();
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#000000')
-    .padding({ top: 18 })
+    .padding({ top: 18 });
   }
 
   @Builder
   private HeaderBuilder() {
     Row() {
-      Text('\u4E66\u5E93')
+      Text('书库')
         .fontSize(34)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
+        .fontColor('#FFFFFF');
 
-      Blank()
+      Blank();
 
       Button('...')
         .fontSize(20)
@@ -65,38 +98,38 @@ export struct BookshelfPage {
         .borderRadius(18)
         .onClick(() => {
           this.showMoreMenu();
-        })
+        });
     }
     .padding({ left: 16, right: 16 })
-    .width('100%')
+    .width('100%');
   }
 
   @Builder
   private ShelfEntryBuilder() {
     Row() {
-      Text('\u85CF\u4E66')
+      Text('藏书')
         .fontSize(20)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#EDEDED')
+        .fontColor('#EDEDED');
 
-      Blank()
+      Blank();
 
       Text('>')
         .fontSize(18)
-        .fontColor('#8D8D8D')
+        .fontColor('#8D8D8D');
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 14, bottom: 10 })
     .border({
       width: { bottom: 1 },
       color: '#1A1A1A'
-    })
+    });
   }
 
   @Builder
   private ViewSwitcherBuilder() {
     Row({ space: 10 }) {
-      Button('\u5217\u8868')
+      Button('列表')
         .height(30)
         .fontSize(13)
         .fontColor(this.viewMode === ShelfViewMode.LIST ? '#101010' : '#DADADA')
@@ -104,9 +137,9 @@ export struct BookshelfPage {
         .borderRadius(15)
         .onClick(() => {
           this.switchView(ShelfViewMode.LIST);
-        })
+        });
 
-      Button('\u7F51\u683C')
+      Button('网格')
         .height(30)
         .fontSize(13)
         .fontColor(this.viewMode === ShelfViewMode.GRID ? '#101010' : '#DADADA')
@@ -114,12 +147,12 @@ export struct BookshelfPage {
         .borderRadius(15)
         .onClick(() => {
           this.switchView(ShelfViewMode.GRID);
-        })
+        });
 
-      Blank()
+      Blank();
     }
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .width('100%')
+    .width('100%');
   }
 
   @Builder
@@ -127,13 +160,16 @@ export struct BookshelfPage {
     List({ space: 2 }) {
       ForEach(this.books, (book: LocalBook) => {
         ListItem() {
-          BookListItem({ book: book })
+          BookListItem({ book: book });
         }
         .backgroundColor('#000000')
-      }, (book: LocalBook) => this.keyOf(book))
+        .onClick(() => {
+          this.openReader(book);
+        });
+      }, (book: LocalBook) => this.keyOf(book));
     }
     .layoutWeight(1)
-    .width('100%')
+    .width('100%');
   }
 
   @Builder
@@ -141,31 +177,60 @@ export struct BookshelfPage {
     Grid() {
       ForEach(this.books, (book: LocalBook) => {
         GridItem() {
-          BookGridItem({ book: book })
+          BookGridItem({ book: book });
         }
-      }, (book: LocalBook) => this.keyOf(book))
+        .onClick(() => {
+          this.openReader(book);
+        });
+      }, (book: LocalBook) => this.keyOf(book));
     }
     .layoutWeight(1)
     .width('100%')
     .columnsTemplate('1fr 1fr')
     .columnsGap(14)
     .rowsGap(18)
-    .padding({ left: 16, right: 16, top: 8, bottom: 16 })
+    .padding({ left: 16, right: 16, top: 8, bottom: 16 });
   }
 
   @Builder
   private EmptyBuilder() {
     Column({ space: 10 }) {
-      Text('\u6682\u65E0\u56FE\u4E66')
+      Text('暂无图书')
         .fontSize(18)
-        .fontColor('#B0B0B0')
-      Text('\u70B9\u51FB\u53F3\u4E0A\u89D2 ... \u5BFC\u5165\u672C\u5730\u56FE\u4E66')
+        .fontColor('#B0B0B0');
+      Text('点击右上角 ... 导入本地图书')
         .fontSize(13)
-        .fontColor('#6E6E6E')
+        .fontColor('#6E6E6E');
     }
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
-    .width('100%')
+    .width('100%');
+  }
+
+  @Builder
+  private HiddenParserWebBuilder() {
+    Web({
+      src: $rawfile('reader/index.html'),
+      controller: this.parserController
+    })
+      .javaScriptAccess(true)
+      .domStorageAccess(true)
+      .fileAccess(true)
+      .onPageEnd(() => {
+        this.parserReady = true;
+        this.tryStartHeadlessParse();
+      })
+      .javaScriptProxy({
+        object: this.parseBridge,
+        name: 'ArkTSBridge',
+        methodList: ['onParseSuccess', 'onParseError'],
+        controller: this.parserController
+      })
+      .width(1)
+      .height(1)
+      .opacity(0)
+      .position({ x: -1000, y: -1000 })
+      .hitTestBehavior(HitTestMode.None);
   }
 
   private async bootstrap(): Promise<void> {
@@ -183,10 +248,6 @@ export struct BookshelfPage {
     }
   }
 
-  /**
-   * Switch mode with conditional rendering and animateTo for smooth transition.
-   * For structurally different trees (List vs Grid), conditional rendering is clearer and safer.
-   */
   private switchView(mode: ShelfViewMode): void {
     if (this.viewMode === mode) {
       return;
@@ -196,11 +257,6 @@ export struct BookshelfPage {
     });
   }
 
-  /**
-   * UI reads from SQLite only:
-   * - instant render in offline mode
-   * - same rendering path before/after sync write-back
-   */
   private triggerBackgroundReconcile(): void {
     const service: SyncService = this.getSyncService();
     void service.fetchCloudBooksAndUpdateLocal()
@@ -213,13 +269,13 @@ export struct BookshelfPage {
 
   private showMoreMenu(): void {
     promptAction.showActionMenu({
-      title: '\u66F4\u591A',
+      title: '更多',
       buttons: [
-        { text: '\u5BFC\u5165\u672C\u5730\u56FE\u4E66', color: '#111111' },
+        { text: '导入本地图书', color: '#111111' },
         {
           text: this.viewMode === ShelfViewMode.LIST
-            ? '\u5207\u6362\u4E3A\u7F51\u683C\u89C6\u56FE'
-            : '\u5207\u6362\u4E3A\u5217\u8868\u89C6\u56FE',
+            ? '切换为网格视图'
+            : '切换为列表视图',
           color: '#111111'
         }
       ]
@@ -235,24 +291,184 @@ export struct BookshelfPage {
   }
 
   private async handleImportBook(): Promise<void> {
+    if (this.parsingBook) {
+      promptAction.showToast({ message: '已有图书正在解析，请稍候' });
+      return;
+    }
+
     try {
-      const docPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker();
+      const context: common.UIAbilityContext = this.getAbilityContext();
+      const docPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
-      options.fileSuffixFilters = ['.epub'];
+      options.fileSuffixFilters = ['Books(.epub)|.epub'];
+
       const uris: string[] = await docPicker.select(options);
-      if (!uris || uris.length === 0) {
+      if (uris.length === 0) {
         return;
       }
 
-      const localBook: LocalBook = await BookImportUtil.importBook(this.getAbilityContext(), uris[0]);
+      const sandboxFile: BookSandboxFile = await BookImportUtil.prepareSandboxFile(context, uris[0]);
+      const duplicated: LocalBook | null = await this.bookDao.findByFileHash(sandboxFile.fileHash);
+      if (duplicated) {
+        promptAction.showToast({ message: '该图书已导入书架' });
+        return;
+      }
+
+      this.pendingImportTask = sandboxFile;
+      this.parsingBook = true;
+      promptAction.showToast({ message: '正在解析图书信息...' });
+      this.tryStartHeadlessParse();
+    } catch (e) {
+      const err: Error = e instanceof Error ? e : new Error(String(e));
+      this.parsingBook = false;
+      this.pendingImportTask = null;
+      promptAction.showToast({ message: `导入失败: ${err.message}` });
+    }
+  }
+
+  onParseSuccess(jsonStr: string): void {
+    void this.finishImportByParsedMetadata(jsonStr);
+  }
+
+  onParseError(message: string): void {
+    this.parsingBook = false;
+    this.pendingImportTask = null;
+    const text: string = message.trim().length > 0 ? message : 'EPUB 解析失败';
+    promptAction.showToast({ message: `导入失败: ${text}` });
+  }
+
+  private tryStartHeadlessParse(): void {
+    if (!this.parserReady || !this.pendingImportTask || !this.parsingBook) {
+      return;
+    }
+
+    try {
+      const realPath: string = this.pendingImportTask.sandboxPath;
+      const file: fs.File = fs.openSync(realPath, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(file.fd);
+
+      if (Number(stat.size) <= 0) {
+        fs.closeSync(file);
+        throw new Error('沙箱文件大小为 0，文件复制失败');
+      }
+
+      const buf: ArrayBuffer = new ArrayBuffer(Number(stat.size));
+      fs.readSync(file.fd, buf);
+      fs.closeSync(file);
+
+      const base64Helper: util.Base64Helper = new util.Base64Helper();
+      const base64Str: string = base64Helper.encodeToStringSync(new Uint8Array(buf));
+      const script: string = `window.parseEpubBase64("${base64Str}")`;
+      this.parserController.runJavaScript(script);
+    } catch (e) {
+      const err: Error = e instanceof Error ? e : new Error(String(e));
+      this.onParseError(`读取文件转码失败: ${err.message}`);
+    }
+  }
+
+  private async finishImportByParsedMetadata(jsonStr: string): Promise<void> {
+    const task: BookSandboxFile | null = this.pendingImportTask;
+    if (!task) {
+      this.parsingBook = false;
+      return;
+    }
+
+    try {
+      const parsed: EpubParsePayload = this.parsePayload(jsonStr);
+      const now: number = Date.now();
+      const finalTitle: string = parsed.title.length > 0 ? parsed.title : task.fallbackTitle;
+      const totalCatalogCount: number = this.countTocItems(parsed.tocJson);
+
+      const localBook: LocalBook = {
+        title: finalTitle,
+        author: parsed.author,
+        coverUrl: parsed.coverBase64,
+        localCoverPath: '',
+        fileHash: task.fileHash,
+        fileUrl: '',
+        format: task.format,
+        fileName: task.fileName,
+        fileSize: task.fileSize,
+        totalCatalogCount: totalCatalogCount,
+        readerBookKey: task.readerBookKey,
+        localPath: task.sandboxPath,
+        localState: LocalBookState.LOCAL_AVAILABLE,
+        syncStatus: LocalBookSyncStatus.PENDING,
+        bookId: '',
+        createdAt: now,
+        updatedAt: now,
+        toc: parsed.tocJson
+      };
+
       await this.bookDao.insert(localBook);
       this.books = await this.bookDao.listAll(true);
+      promptAction.showToast({ message: '导入成功' });
       this.triggerBackgroundReconcile();
     } catch (e) {
       const err: Error = e instanceof Error ? e : new Error(String(e));
-      promptAction.showToast({ message: `\u5BFC\u5165\u5931\u8D25: ${err.message}` });
+      promptAction.showToast({ message: `导入失败: ${err.message}` });
+    } finally {
+      this.pendingImportTask = null;
+      this.parsingBook = false;
     }
+  }
+
+  private parsePayload(jsonStr: string): EpubParsePayload {
+    const raw: Record<string, string | number | boolean | null> =
+      JSON.parse(jsonStr) as Record<string, string | number | boolean | null>;
+
+    const title: string = typeof raw.title === 'string' ? raw.title.trim() : '';
+    const author: string = typeof raw.author === 'string' ? raw.author.trim() : '';
+    const coverBase64: string = typeof raw.coverBase64 === 'string' ? raw.coverBase64 : '';
+    const tocJson: string = typeof raw.tocJson === 'string' ? raw.tocJson : '';
+
+    return {
+      title: title,
+      author: author,
+      coverBase64: coverBase64,
+      tocJson: tocJson
+    };
+  }
+
+  private countTocItems(tocJson: string): number {
+    if (tocJson.trim().length === 0) {
+      return 0;
+    }
+    try {
+      const parsed: Object = JSON.parse(tocJson) as Object;
+      if (Array.isArray(parsed)) {
+        return parsed.length;
+      }
+      return 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  private openReader(book: LocalBook): void {
+    const path: string = book.localPath ? book.localPath.trim() : '';
+    if (path.length === 0 || book.localState !== LocalBookState.LOCAL_AVAILABLE) {
+      promptAction.showToast({ message: '该图书本地文件不可用' });
+      return;
+    }
+
+    try {
+      fs.accessSync(path);
+    } catch (_) {
+      promptAction.showToast({ message: '本地图书文件不存在，请重新导入' });
+      return;
+    }
+
+    router.pushUrl({
+      url: 'pages/Reader',
+      params: {
+        localPath: path,
+        lastLocator: ''
+      }
+    }).catch(() => {
+      promptAction.showToast({ message: '打开阅读页失败' });
+    });
   }
 
   private getSyncService(): SyncService {
@@ -263,7 +479,11 @@ export struct BookshelfPage {
   }
 
   private getAbilityContext(): common.UIAbilityContext {
-    return getContext(this) as common.UIAbilityContext;
+    const hostContext: Object | undefined = this.getUIContext().getHostContext();
+    if (!hostContext) {
+      throw new Error('host context is undefined');
+    }
+    return hostContext as common.UIAbilityContext;
   }
 
   private keyOf(book: LocalBook): string {

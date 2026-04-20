@@ -39,6 +39,7 @@ export interface LocalBook {
   syncStatus: LocalBookSyncStatus;
   createdAt: number;
   updatedAt: number;
+  toc?: string; // 【新增】用于存储章节目录的 JSON 字符串
 }
 
 export class LocalBookEntity {

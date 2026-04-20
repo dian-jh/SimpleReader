@@ -8,7 +8,7 @@ struct Index {
   @State currentIndex: number = 1;
 
   // 🌟 开发调试开关：上线前改为 false
-  private readonly IS_DEBUG: boolean = true;
+  private readonly IS_DEBUG: boolean = false;
 
   // 组件即将出现时触发的生命周期函数
   aboutToAppear() {

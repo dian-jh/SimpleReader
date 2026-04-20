@@ -1,15 +1,15 @@
-// 修正点：路径必须与你的目录完全一致，注意 features 的 s
+// 淇鐐癸細璺緞蹇呴』涓庝綘鐨勭洰褰曞畬鍏ㄤ竴鑷达紝娉ㄦ剰 features 鐨?s
 import { Reader } from '../features/reader/engine/Reader';
 
 @Entry
 @Component
 struct Index {
-  // 确保 rawfile 目录下有这个文件
+  // 纭繚 rawfile 鐩綍涓嬫湁杩欎釜鏂囦欢
   @State currentBookPath: string = 'book.epub';
 
   build() {
     Column() {
-      // 顶部原生状态栏
+      // 椤堕儴鍘熺敓鐘舵€佹爮
       Row() {
         Text("SimpleReader")
           .fontSize(18)
@@ -21,10 +21,10 @@ struct Index {
       .backgroundColor('#2C2C2C')
       .padding({ left: 15 })
 
-      // 核心阅读组件
+      // 鏍稿績闃呰缁勪欢
       Column() {
-        // 调用 Reader 组件
-        Reader({ bookFileName: this.currentBookPath })
+        // 璋冪敤 Reader 缁勪欢
+        Reader({ localPath: this.currentBookPath })
       }
       .layoutWeight(1)
     }
