@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="jszip.min.js"></script>
+    <script src="epub.min.js"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #FAF9F1;
+        }
+        #viewer { width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+<div id="viewer"></div>
+<script>
+    let book;
+    let rendition;
+
+    // 供 ArkTS 调用的入口函数
+    function loadBook(base64Data) {
+        console.log("HTML_LOG: 收到数据，开始解码...");
+        try {
+            const binaryString = atob(base64Data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            // 初始化 epub.js
+            book = ePub(bytes.buffer);
+            rendition = book.renderTo("viewer", {
+                width: "100%",
+                height: "100%",
+                flow: "paginated",
+                manager: "default"
+            });
+
+            rendition.display().then(() => {
+                console.log("HTML_LOG: 书籍渲染成功完成");
+            }).catch(err => {
+                console.error("HTML_LOG: 渲染失败: " + err.message);
+            });
+
+        } catch (e) {
+            console.error("HTML_LOG: 解码或初始化错误: " + e.message);
+        }
+    }
+
+    function prevPage() { if (rendition) rendition.prev(); }
+    function nextPage() { if (rendition) rendition.next(); }
+
+    // 告知 ArkTS 环境已就绪
+    console.log("HTML_LOG: Viewer 环境加载完毕");
+</script>
+</body>
+</html>
